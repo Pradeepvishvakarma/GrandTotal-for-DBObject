@@ -1,0 +1,100 @@
+import java.math.BigDecimal;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public class Formatter {
+
+    public static List<DBObject> formatDbValues(List<DBObject> dbObjects, List<Column> columns) {
+        columns.stream()
+            .filter(column -> "number".equalsIgnoreCase(column.getType()) && column.getFormat() != null)
+            .forEach(column -> {
+                BigDecimal scaleFactor = getScaleFactor(column.getFormat());
+                dbObjects.forEach(dbObject -> dbObject.computeIfPresent(
+                    column.getTitle(),
+                    (key, value) -> value instanceof Number ? 
+                                    new BigDecimal(value.toString()).divide(scaleFactor, 2, BigDecimal.ROUND_HALF_UP) : value
+                ));
+            });
+        return dbObjects;
+    }
+
+    public static Map<String, Object> calculateGrandTotals(List<DBObject> dbObjects, List<Column> columns) {
+        Map<String, Object> result = new HashMap<>();
+        Map<String, BigDecimal> columnGrandTotal = new HashMap<>();
+
+        Map<String, BigDecimal> rowGrandTotal = dbObjects.stream().collect(Collectors.toMap(
+            dbObject -> generateRowKey(dbObject, columns), // Unique key based on string columns
+            dbObject -> calculateRowTotal(dbObject, columns), // Sum of numeric columns
+            BigDecimal::add // Merge function if keys duplicate
+        ));
+
+        // Calculate column grand totals
+        columns.stream()
+            .filter(column -> "number".equalsIgnoreCase(column.getType()))
+            .forEach(column -> {
+                String title = column.getTitle();
+                BigDecimal total = dbObjects.stream()
+                    .map(dbObject -> dbObject.containsField(title) ? new BigDecimal(dbObject.get(title).toString()) : BigDecimal.ZERO)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+                columnGrandTotal.put(title, total);
+            });
+
+        result.put("rowGrandTotal", rowGrandTotal);
+        result.put("columnGrandTotal", columnGrandTotal);
+        return result;
+    }
+
+    private static String generateRowKey(DBObject dbObject, List<Column> columns) {
+        // Generate unique key by joining string column values with "~"
+        return columns.stream()
+            .filter(column -> "string".equalsIgnoreCase(column.getType()))
+            .map(column -> dbObject.get(column.getTitle()).toString())
+            .collect(Collectors.joining("~"));
+    }
+
+    private static BigDecimal calculateRowTotal(DBObject dbObject, List<Column> columns) {
+        return columns.stream()
+            .filter(column -> "number".equalsIgnoreCase(column.getType()))
+            .map(column -> dbObject.containsField(column.getTitle()) ? new BigDecimal(dbObject.get(column.getTitle()).toString()) : BigDecimal.ZERO)
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static BigDecimal getScaleFactor(String format) {
+        return "K".equals(format) ? BigDecimal.valueOf(1000) :
+               "MM".equals(format) ? BigDecimal.valueOf(1000000) : BigDecimal.ONE;
+    }
+}
+
+
+
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+
+{
+  "rowGrandTotal": {
+    "ASIA~Sales": 7.00,
+    "EUROPE~Marketing": 350.00,
+    "AMERICAS~Finance": 125.00,
+    "ASIA~R&D": 205.00
+  },
+  "columnGrandTotal": {
+    "revenue": 455.00,
+    "expenses": 232.00
+  }
+}
+
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
+{
+  "rowGrandTotal": {},
+  "columnGrandTotal": {}
+}
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
